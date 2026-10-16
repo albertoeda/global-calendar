@@ -1,12 +1,13 @@
 //! The PEOPLE modal: browse, add, edit and delete team members, saved straight to team.toml.
 
-#![allow(dead_code)] // Rendering and app wiring land in the next commit.
-
+use super::style;
 use crate::cities::CityDb;
 use crate::config::{self, Person};
 use crate::people_file::{self, Entry};
+use crate::theme::Palette;
 use crate::timecalc;
 use chrono::{DateTime, Utc};
+use eframe::egui::{self, Color32, RichText, Sense, Stroke, text::LayoutJob};
 use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -204,7 +205,10 @@ impl PeopleEditor {
             _ if self.read_only.is_some() => {}
             Key::Char('a') => self.start_form(None),
             Key::Enter | Key::Char('e') if n > 0 => self.start_form(Some(self.selected)),
-            Key::Char('d') if n > 0 => self.mode = Mode::ConfirmDelete(self.selected),
+            Key::Char('d') if n > 0 => {
+                self.mode = Mode::ConfirmDelete(self.selected);
+                self.status = None;
+            }
             _ => {}
         }
         Action::None
@@ -284,6 +288,229 @@ impl PeopleEditor {
         self.mode = Mode::List;
         self.status = Some(message);
     }
+}
+
+fn clip(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        format!("{}…", s.chars().take(n - 1).collect::<String>())
+    }
+}
+
+/// Draws the modal. Returns a command from a clicked button or the backdrop.
+pub fn show(
+    ctx: &egui::Context,
+    ed: &mut PeopleEditor,
+    pal: &Palette,
+    db: &CityDb,
+    now: DateTime<Utc>,
+) -> Option<Key> {
+    let mut pressed = None;
+    let modal = egui::Modal::new(egui::Id::unique("people"))
+        .backdrop_color(Color32::from_black_alpha(140))
+        .frame(
+            egui::Frame::NONE
+                .fill(pal.panel)
+                .stroke(Stroke::new(1.0, pal.accent))
+                .inner_margin(egui::Margin::same(16)),
+        )
+        .show(ctx, |ui| {
+            ui.set_width(660.0);
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("PEOPLE ({})", ed.entries.len()))
+                        .font(style::bold(15.0))
+                        .color(pal.accent),
+                );
+                // Long paths are cut short (hover shows the full one) so the modal keeps its width.
+                ui.add(
+                    egui::Label::new(
+                        RichText::new(ed.path.display().to_string())
+                            .font(style::mono(11.0))
+                            .color(pal.subtext),
+                    )
+                    .truncate(),
+                );
+            });
+            ui.add_space(6.0);
+            if let Some(err) = &ed.read_only {
+                ui.label(RichText::new(format!("✗ {err}")).color(pal.bad));
+                ui.label(
+                    RichText::new("fix team.toml by hand, then press R to reload")
+                        .color(pal.subtext),
+                );
+            }
+            list(ui, ed, pal, db, now);
+            ui.add_space(6.0);
+            match ed.mode {
+                Mode::Form { .. } => form(ui, ed, pal, db, now),
+                Mode::ConfirmDelete(i) => {
+                    let name = ed.entries.get(i).map_or("", |e| e.name.as_str());
+                    ui.label(
+                        RichText::new(format!("delete {name}?  y = yes · any other key = no"))
+                            .color(pal.warn),
+                    );
+                }
+                Mode::List => {}
+            }
+            if let Some(msg) = &ed.status {
+                let color = if msg.starts_with('✗') {
+                    pal.bad
+                } else {
+                    pal.accent
+                };
+                ui.label(RichText::new(msg).color(color));
+            }
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let mut button = |ui: &mut egui::Ui, label: &str, key: Key| {
+                    if ui.button(label).clicked() {
+                        pressed = Some(key);
+                    }
+                };
+                match ed.mode {
+                    Mode::List => {
+                        if ed.read_only.is_none() {
+                            button(ui, "[a] add", Key::Char('a'));
+                            if !ed.entries.is_empty() {
+                                button(ui, "[e] edit", Key::Char('e'));
+                                button(ui, "[d] delete", Key::Char('d'));
+                            }
+                        }
+                        button(ui, "[Esc] close", Key::Escape);
+                        ui.label(RichText::new("↑/↓ select").color(pal.subtext));
+                    }
+                    Mode::Form { .. } => {
+                        button(ui, "[Enter] save", Key::Enter);
+                        button(ui, "[Esc] cancel", Key::Escape);
+                        ui.label(RichText::new("Tab next field").color(pal.subtext));
+                    }
+                    Mode::ConfirmDelete(_) => {
+                        button(ui, "[y] delete", Key::Char('y'));
+                        button(ui, "[n] keep", Key::Char('n'));
+                    }
+                }
+            });
+        });
+    if modal.should_close() && pressed.is_none() {
+        pressed = Some(Key::Escape);
+    }
+    pressed
+}
+
+fn list(ui: &mut egui::Ui, ed: &mut PeopleEditor, pal: &Palette, db: &CityDb, now: DateTime<Utc>) {
+    if ed.entries.is_empty() {
+        if ed.read_only.is_none() {
+            ui.label(RichText::new("no one yet — press a to add someone").color(pal.subtext));
+        }
+        return;
+    }
+    let mut clicked = None;
+    let scroll = std::mem::take(&mut ed.scroll);
+    egui::ScrollArea::vertical()
+        .max_height(240.0)
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            for (i, e) in ed.entries.iter().enumerate() {
+                let selected = i == ed.selected;
+                let (status, status_color) = match config::resolve_entry(e, db) {
+                    Ok(p) => (
+                        timecalc::format_offset(timecalc::offset_secs(now, p.tz)),
+                        pal.subtext,
+                    ),
+                    Err(err) => (format!("✗ {err}"), pal.bad),
+                };
+                let (fg, bg) = if selected {
+                    (pal.bg, pal.accent)
+                } else {
+                    (pal.text, Color32::TRANSPARENT)
+                };
+                let format = |color| egui::TextFormat {
+                    font_id: style::mono(13.0),
+                    color,
+                    background: bg,
+                    ..Default::default()
+                };
+                let mut job = LayoutJob::default();
+                let marker = if selected { '›' } else { ' ' };
+                job.append(
+                    &format!(
+                        "{marker} {:<16} {:<22} ",
+                        clip(&e.name, 16),
+                        clip(&e.city, 22)
+                    ),
+                    0.0,
+                    format(fg),
+                );
+                job.append(
+                    &status,
+                    0.0,
+                    format(if selected { pal.bg } else { status_color }),
+                );
+                let resp = ui.add(egui::Label::new(job).sense(Sense::click()).truncate());
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+                if selected && scroll {
+                    resp.scroll_to_me(None);
+                }
+            }
+        });
+    if let Some(i) = clicked
+        && ed.mode == Mode::List
+    {
+        ed.selected = i;
+    }
+}
+
+fn form(ui: &mut egui::Ui, ed: &mut PeopleEditor, pal: &Palette, db: &CityDb, now: DateTime<Utc>) {
+    let Mode::Form { index, field } = ed.mode else {
+        return;
+    };
+    let title = if index.is_some() { "EDIT" } else { "ADD" };
+    ui.label(
+        RichText::new(title)
+            .font(style::bold(13.0))
+            .color(pal.accent),
+    );
+    let focus_now = std::mem::take(&mut ed.focus_request);
+    let mut clicked_field = None;
+    egui::Grid::new("person-form")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            for f in Field::ALL {
+                let hint = match f {
+                    Field::Name => "Ana",
+                    Field::City => "Lisbon  ·  Portland, OR",
+                    Field::Lat | Field::Lon => "optional",
+                    Field::Tz => "optional, e.g. Europe/Lisbon",
+                };
+                let label_color = if f == field { pal.accent } else { pal.subtext };
+                ui.label(RichText::new(f.label()).color(label_color));
+                let resp = ui.add(
+                    egui::TextEdit::singleline(ed.form.field_mut(f))
+                        .hint_text(hint)
+                        .desired_width(380.0)
+                        .font(style::mono(14.0)),
+                );
+                if f == field && focus_now {
+                    resp.request_focus();
+                }
+                if resp.gained_focus() && f != field {
+                    clicked_field = Some(f);
+                }
+                ui.end_row();
+            }
+        });
+    if let Some(f) = clicked_field {
+        ed.set_field(f);
+    }
+    match ed.describe(db, now) {
+        Ok(s) => ui.label(RichText::new(format!("✓ {s}")).color(pal.ok)),
+        Err(e) => ui.label(RichText::new(format!("✗ {e}")).color(pal.bad)),
+    };
 }
 
 #[cfg(test)]

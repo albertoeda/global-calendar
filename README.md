@@ -76,6 +76,7 @@ See [`examples/team.toml`](examples/team.toml) for a complete example.
 | `T` / `Shift+T`         | Next / previous theme (saved to `team.toml`)|
 | `Tab` / `Shift+Tab`     | Focus next / previous city group            |
 | `?`                     | Help overlay                                |
+| `P`                     | Edit people: add / edit / delete (saved to `team.toml`) |
 | `R`                     | Reload `team.toml`                          |
 | `Q` / `Esc`             | Quit, or close the overlay                  |
 | `Ctrl+Q` / `⌘+Q`        | Quit                                        |

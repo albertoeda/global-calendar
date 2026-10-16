@@ -5,12 +5,15 @@ mod people_editor;
 mod slider;
 mod style;
 
+use crate::cities::CityDb;
 use crate::config::{self, TeamConfig};
+use crate::people_file;
 use crate::theme::{self, Palette, THEMES};
 use crate::timecalc;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use chrono_tz::Tz;
 use eframe::egui::{self, Align, Key, Layout, Modifiers, RichText};
+use people_editor::{Action as EdAction, Key as EdKey, PeopleEditor};
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -84,6 +87,8 @@ pub struct TeamClockApp {
     /// First member index of the focused group (stable when groups merge).
     focus: Option<usize>,
     show_help: bool,
+    /// The PEOPLE modal, while open.
+    people: Option<PeopleEditor>,
     toast: Option<(String, Instant)>,
     map: map_view::MapView,
     availability: slider::AvailabilityCache,
@@ -101,6 +106,7 @@ impl TeamClockApp {
             mode: Mode::Live,
             focus: None,
             show_help: false,
+            people: None,
             toast: None,
             map: map_view::MapView::default(),
             availability: slider::AvailabilityCache::default(),
@@ -205,7 +211,107 @@ impl TeamClockApp {
         self.toast = Some((msg, Instant::now()));
     }
 
+    fn open_people(&mut self) {
+        let path = self
+            .config
+            .path
+            .clone()
+            .or_else(|| self.cli_path.clone())
+            .unwrap_or_else(config::default_path);
+        self.show_help = false;
+        self.people = Some(PeopleEditor::open(path));
+    }
+
+    fn reload_team(&mut self, ctx: &egui::Context) {
+        self.load_config();
+        style::apply(ctx, self.palette());
+    }
+
+    /// While the editor is open it owns the keyboard. In the form, typing goes to the inputs.
+    fn people_input(&mut self, ctx: &egui::Context) {
+        let in_form = matches!(
+            self.people.as_ref().map(|e| e.mode),
+            Some(people_editor::Mode::Form { .. })
+        );
+        let keys = ctx.input_mut(|i| {
+            let mut keys = Vec::new();
+            for (mods, key, k) in [
+                (Modifiers::SHIFT, Key::Tab, EdKey::BackTab),
+                (Modifiers::NONE, Key::Tab, EdKey::Tab),
+                (Modifiers::NONE, Key::ArrowUp, EdKey::Up),
+                (Modifiers::NONE, Key::ArrowDown, EdKey::Down),
+                (Modifiers::NONE, Key::Enter, EdKey::Enter),
+                (Modifiers::NONE, Key::Escape, EdKey::Escape),
+            ] {
+                while i.consume_key(mods, key) {
+                    keys.push(k);
+                }
+            }
+            if !in_form {
+                i.events.retain(|e| match e {
+                    egui::Event::Text(t) => {
+                        keys.extend(t.chars().map(EdKey::Char));
+                        false
+                    }
+                    _ => true,
+                });
+            }
+            keys
+        });
+        for k in keys {
+            self.people_key(ctx, k);
+        }
+    }
+
+    fn people_key(&mut self, ctx: &egui::Context, key: EdKey) {
+        let Some(ed) = self.people.as_mut() else {
+            return;
+        };
+        let mut changed = false;
+        match ed.handle_key(key, CityDb::embedded()) {
+            EdAction::None => {}
+            EdAction::Close => self.people = None,
+            EdAction::Save { index, entry } => {
+                let created = !ed.path.exists();
+                let select = index.unwrap_or(ed.entries.len());
+                match people_file::write_entry(&ed.path, index, &entry) {
+                    Ok(()) => {
+                        let msg = if created {
+                            format!("created {}", ed.path.display())
+                        } else {
+                            format!("saved {}", entry.name)
+                        };
+                        ed.after_write(Some(select), msg);
+                        changed = true;
+                    }
+                    Err(e) => ed.status = Some(format!("✗ {e:#}")),
+                }
+            }
+            EdAction::Delete(i) => {
+                let name = ed
+                    .entries
+                    .get(i)
+                    .map(|e| e.name.clone())
+                    .unwrap_or_default();
+                match people_file::remove_entry(&ed.path, i) {
+                    Ok(()) => {
+                        ed.after_write(Some(i), format!("deleted {name}"));
+                        changed = true;
+                    }
+                    Err(e) => ed.status = Some(format!("✗ {e:#}")),
+                }
+            }
+        }
+        if changed {
+            self.reload_team(ctx);
+        }
+    }
+
     fn handle_input(&mut self, ctx: &egui::Context) {
+        if self.people.is_some() {
+            self.people_input(ctx);
+            return;
+        }
         // Consume keys before any widget sees them, so Tab etc. don't drive egui's own focus.
         let (keys, texts) = ctx.input_mut(|i| {
             let mut keys = Vec::new();
@@ -261,9 +367,9 @@ impl TeamClockApp {
                     '[' => self.shift_days(-1),
                     ']' => self.shift_days(1),
                     '?' => self.show_help = !self.show_help,
+                    'p' | 'P' => self.open_people(),
                     'r' | 'R' => {
-                        self.load_config();
-                        style::apply(ctx, self.palette());
+                        self.reload_team(ctx);
                         self.toast(format!("reloaded: {} people", self.config.people.len()));
                     }
                     'q' | 'Q' => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
@@ -369,6 +475,9 @@ impl TeamClockApp {
                 if ui.button("[T] theme").clicked() {
                     self.cycle_theme(ctx, true);
                 }
+                if ui.button("[P] people").clicked() {
+                    self.open_people();
+                }
                 let live = self.mode == Mode::Live;
                 let now_btn = ui.add_enabled(!live, egui::Button::new("[N] now"));
                 if now_btn.clicked() {
@@ -388,6 +497,7 @@ impl TeamClockApp {
             ("N", "back to now (live)"),
             ("T / Shift+T", "next / previous theme"),
             ("Tab / Shift+Tab", "focus next / previous city"),
+            ("P", "edit people"),
             ("R", "reload team.toml"),
             ("?", "toggle this help"),
             ("Esc", "close help · clear focus · quit"),
@@ -488,6 +598,13 @@ impl eframe::App for TeamClockApp {
 
         if self.show_help {
             self.help(&ctx);
+        }
+        let pressed = self
+            .people
+            .as_mut()
+            .and_then(|ed| people_editor::show(&ctx, ed, &pal, CityDb::embedded(), now));
+        if let Some(k) = pressed {
+            self.people_key(&ctx, k);
         }
 
         // Wake up for the next minute (live clock) or when the toast expires.
