@@ -128,6 +128,8 @@ pub struct MapInput<'a> {
     /// First member index of the focused group.
     pub focus: Option<usize>,
     pub errors: &'a [String],
+    /// Short-lived message (theme changed, reloaded) shown top-right.
+    pub toast: Option<&'a str>,
 }
 
 #[derive(Default)]
@@ -272,6 +274,22 @@ impl MapView {
         } else {
             draw_errors(&painter, canvas, input.errors, pal);
         }
+        if let Some(msg) = input.toast {
+            let galley = painter.layout_no_wrap(msg.to_string(), style::mono(13.0), pal.accent);
+            let size = galley.size() + vec2(2.0 * PAD_X, 2.0 * PAD_Y);
+            let r = Rect::from_min_size(
+                Pos2::new(canvas.right() - 12.0 - size.x, canvas.top() + 12.0),
+                size,
+            );
+            painter.rect(
+                r,
+                0.0,
+                pal.panel,
+                Stroke::new(1.0, pal.accent),
+                StrokeKind::Inside,
+            );
+            painter.galley(r.min + vec2(PAD_X, PAD_Y), galley, pal.accent);
+        }
         clicked
     }
 
@@ -289,14 +307,12 @@ impl MapView {
         let Some((_, dots)) = &self.dots else { return };
         let sub = solar::subsolar_point(instant);
         let radius = (proj.px_per_deg() * step as f32 * 0.34).max(1.0);
+        // Lift daylit land a little towards the text colour so the terminator reads clearly.
+        let day_color = mix(pal.land_day, pal.subtext, 0.2);
         for d in dots {
             let (x, y) = proj.project(d.lat, d.lon);
             let day = solar::daylight(sub, d.lat, d.lon);
-            painter.circle_filled(
-                Pos2::new(x, y),
-                radius,
-                mix(pal.land_night, pal.land_day, day),
-            );
+            painter.circle_filled(Pos2::new(x, y), radius, mix(pal.land_night, day_color, day));
         }
     }
 }

@@ -208,15 +208,17 @@ impl TeamClockApp {
         // Consume keys before any widget sees them, so Tab etc. don't drive egui's own focus.
         let (keys, texts) = ctx.input_mut(|i| {
             let mut keys = Vec::new();
+            // Shifted variants first: `consume_key` matches logically, so a NONE pattern
+            // would also swallow Shift+key.
             for (mods, key) in [
-                (Modifiers::NONE, Key::ArrowRight),
-                (Modifiers::NONE, Key::ArrowLeft),
                 (Modifiers::SHIFT, Key::ArrowRight),
                 (Modifiers::SHIFT, Key::ArrowLeft),
+                (Modifiers::SHIFT, Key::Tab),
+                (Modifiers::NONE, Key::ArrowRight),
+                (Modifiers::NONE, Key::ArrowLeft),
                 (Modifiers::NONE, Key::Home),
                 (Modifiers::NONE, Key::End),
                 (Modifiers::NONE, Key::Tab),
-                (Modifiers::SHIFT, Key::Tab),
                 (Modifiers::NONE, Key::Escape),
                 (Modifiers::COMMAND, Key::Q),
             ] {
@@ -303,22 +305,21 @@ impl TeamClockApp {
                 }
             }
 
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.label(RichText::new(THEMES[self.theme].name).color(pal.subtext));
-                ui.label(RichText::new("│").color(pal.border));
-                let people = self.config.people.len();
-                ui.label(
-                    RichText::new(format!(
-                        "{people} {}",
-                        if people == 1 { "person" } else { "people" }
-                    ))
-                    .color(pal.subtext),
-                );
-                if let Some((msg, _)) = &self.toast {
+            // Secondary info only when it fits; the left side always wins.
+            if ui.available_width() > 360.0 {
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.label(RichText::new(THEMES[self.theme].name).color(pal.subtext));
                     ui.label(RichText::new("│").color(pal.border));
-                    ui.label(RichText::new(msg).color(pal.accent));
-                }
-            });
+                    let people = self.config.people.len();
+                    ui.label(
+                        RichText::new(format!(
+                            "{people} {}",
+                            if people == 1 { "person" } else { "people" }
+                        ))
+                        .color(pal.subtext),
+                    );
+                });
+            }
         });
     }
 
@@ -351,12 +352,15 @@ impl TeamClockApp {
                 ui.label(RichText::new(key).color(pal.accent));
                 ui.label(RichText::new(what).color(pal.subtext));
             };
+            let wide = ui.available_width() > 1000.0;
             ui.label(RichText::new(date.format("%a %d %b %Y").to_string()).color(pal.text));
-            ui.label(RichText::new("│").color(pal.border));
-            hint(ui, "←/→", "15m");
-            hint(ui, "⇧←/→", "1h");
-            hint(ui, "[ ]", "day");
-            hint(ui, "Tab", "focus");
+            if wide {
+                ui.label(RichText::new("│").color(pal.border));
+                hint(ui, "←/→", "15m");
+                hint(ui, "⇧←/→", "1h");
+                hint(ui, "[ ]", "day");
+                hint(ui, "Tab", "focus");
+            }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("[?] help").clicked() {
                     self.show_help = !self.show_help;
@@ -469,6 +473,7 @@ impl eframe::App for TeamClockApp {
                         viewer: self.viewer_tz,
                         focus: self.focus,
                         errors: &self.config.errors,
+                        toast: self.toast.as_ref().map(|(msg, _)| msg.as_str()),
                     },
                 );
                 if let Some(first) = clicked {
