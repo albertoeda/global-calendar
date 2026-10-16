@@ -1,6 +1,7 @@
 //! The egui application: map canvas, slider bar, status bar, help overlay, keybindings.
 
 mod map_view;
+mod people_editor;
 mod slider;
 mod style;
 
