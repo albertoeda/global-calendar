@@ -1,0 +1,13 @@
+[package]
+name = "gen-assets"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# Standalone helper: regenerates assets/landmask.bin and assets/cities.csv.
+# Not part of the shipped app.
+[workspace]
+
+[dependencies]
+serde_json = "1.0"
+anyhow = "1.0"
