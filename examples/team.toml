@@ -1,0 +1,80 @@
+# Example team for team-clock.
+#
+# Run it with:  cargo run --release -- examples/team.toml
+#
+# Format
+# ------
+# theme   (optional) colour scheme name, e.g. "catppuccin-mocha", "gruvbox-dark",
+#         "nord". Pressing T / Shift+T in the app cycles themes and saves the
+#         choice back into this line.
+#
+# Each [[person]] needs a `name` and a `city`. The city is looked up
+# case-insensitively in the built-in GeoNames city list (official name, ASCII
+# spelling or a common alternative such as "Bangalore"). Add ", <country or
+# state>" to disambiguate, e.g. "Portland, OR", "London, Canada" or "Valencia, ES".
+#
+# For a place that isn't in the list (or to pin an exact spot), give `lat`,
+# `lon` (decimal degrees) and an IANA `tz` yourself; `city` is then only a label.
+
+theme = "catppuccin-mocha"
+
+# --- Europe -----------------------------------------------------------------
+
+[[person]]
+name = "Ana"
+city = "London"
+
+[[person]]
+name = "Ben"
+city = "London"
+
+[[person]]
+name = "Chloé"
+city = "Paris"
+
+[[person]]
+name = "Dries"
+city = "Brussels"
+
+[[person]]
+name = "Eva"
+city = "Amsterdam"
+
+[[person]]
+name = "Felix"
+city = "Berlin"
+
+[[person]]
+name = "Greta"
+city = "Berlin"
+
+# Manual override: explicit coordinates and timezone. Use this for villages or
+# anywhere the city list doesn't cover; `city` is then just the displayed label.
+[[person]]
+name = "Kim"
+city = "Tórshavn"
+lat = 62.01
+lon = -6.77
+tz = "Atlantic/Faroe"
+
+# --- Rest of the world -------------------------------------------------------
+
+[[person]]
+name = "Priya"
+city = "Bangalore"
+
+[[person]]
+name = "Tama"
+city = "Auckland"
+
+[[person]]
+name = "Sam"
+city = "San Francisco"
+
+[[person]]
+name = "Jordan"
+city = "New York"
+
+[[person]]
+name = "Lucas"
+city = "São Paulo"
