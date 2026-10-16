@@ -266,7 +266,7 @@ impl MapView {
                 painter.text(
                     canvas.center(),
                     Align2::CENTER_CENTER,
-                    "No team members yet — add some to team.toml",
+                    "No team members yet — press P to add people",
                     style::mono(14.0),
                     pal.subtext,
                 );

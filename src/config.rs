@@ -73,10 +73,30 @@ pub fn search_paths(cli: Option<&Path>) -> Vec<PathBuf> {
     paths
 }
 
-/// Loads the first existing file from [`search_paths`].
+/// Written on first launch so the app works without the user creating a file.
+const STARTER: &str = r#"# team-clock team file. Press P in the app to add, edit or remove people,
+# or edit this file by hand and press R to reload.
+#
+# Each [[person]] needs a `name` and a `city`, e.g.
+#
+#   [[person]]
+#   name = "Ana"
+#   city = "Lisbon"
+#
+# Add ", <country or state>" to disambiguate ("Portland, OR"). For a place the
+# built-in city list doesn't cover, also give `lat`, `lon` and an IANA `tz`.
+"#;
+
+/// Loads the first existing file from [`search_paths`]. With no CLI path and no file
+/// anywhere, creates a starter file at [`default_path`] and loads that.
 pub fn load(cli: Option<&Path>) -> TeamConfig {
     let paths = search_paths(cli);
-    let Some(path) = paths.iter().find(|p| p.is_file()) else {
+    let found = paths.iter().find(|p| p.is_file()).cloned();
+    let created = match (&found, cli) {
+        (None, None) => create_starter(&default_path()).ok(),
+        _ => None,
+    };
+    let Some(path) = found.or(created) else {
         let looked = paths
             .iter()
             .map(|p| p.display().to_string())
@@ -89,14 +109,14 @@ pub fn load(cli: Option<&Path>) -> TeamConfig {
             ..TeamConfig::default()
         };
     };
-    let mut cfg = match std::fs::read_to_string(path) {
+    let mut cfg = match std::fs::read_to_string(&path) {
         Ok(text) => parse(&text, CityDb::embedded()),
         Err(e) => TeamConfig {
             errors: vec![format!("Could not read {}: {e}", path.display())],
             ..TeamConfig::default()
         },
     };
-    cfg.path = Some(path.clone());
+    cfg.path = Some(path);
     cfg
 }
 
@@ -136,6 +156,19 @@ impl From<&RawPerson> for Entry {
             tz: p.tz.clone(),
         }
     }
+}
+
+/// Writes [`STARTER`] to `path`, creating its directories. Never overwrites.
+fn create_starter(path: &Path) -> std::io::Result<PathBuf> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, STARTER.as_bytes()))?;
+    Ok(path.to_path_buf())
 }
 
 /// Where a new team.toml is created when none exists yet: the platform config dir.
@@ -385,6 +418,34 @@ city = "Lisbon"
         let _ = std::fs::remove_file(&path);
         assert_eq!(cfg.path.as_deref(), Some(path.as_path()));
         assert_eq!(cfg.people.len(), 1);
+    }
+
+    #[test]
+    fn starter_is_valid_and_not_overwritten() {
+        let cfg = p(STARTER);
+        assert!(cfg.errors.is_empty(), "{:?}", cfg.errors);
+        assert!(cfg.people.is_empty());
+
+        let path = std::env::temp_dir()
+            .join(format!("team-clock-starter-{}", std::process::id()))
+            .join("nested")
+            .join("team.toml");
+        assert_eq!(create_starter(&path).unwrap(), path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), STARTER);
+        assert!(create_starter(&path).is_err());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    #[ignore = "writes to the real config dir: run only in a throwaway environment (CI, container)"]
+    fn first_run_creates_starter_in_config_dir() {
+        let path = default_path();
+        assert!(!path.is_file(), "{} already exists", path.display());
+        let cfg = load(None);
+        assert!(cfg.errors.is_empty(), "{:?}", cfg.errors);
+        assert_eq!(cfg.path.as_deref(), Some(path.as_path()));
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), STARTER);
+        println!("created {}", path.display());
     }
 
     fn temp_file(tag: &str) -> PathBuf {

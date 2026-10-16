@@ -18,7 +18,7 @@ self-contained binary.
 - Manual `lat`/`lon`/`tz` override for anywhere the database doesn't cover
 - 13 colour schemes; your choice is saved back to `team.toml`
 - Fully keyboard-driven, with a `?` help overlay
-- All assets (map, cities, font) are embedded: one executable plus your `team.toml`
+- All assets (map, cities, font) are embedded: a single executable that creates its own `team.toml` on first run
 
 ## Quick start
 
@@ -37,6 +37,9 @@ cargo run --release -- examples/team.toml
 | Windows | `%APPDATA%\team-clock\config\team.toml`               |
 | macOS   | `~/Library/Application Support/team-clock/team.toml`  |
 | Linux   | `~/.config/team-clock/team.toml`                      |
+
+If none exists and no path was given, the app creates an empty one in the config directory on
+first launch. Press `P` to add people.
 
 ## Config format
 
