@@ -5,6 +5,7 @@ pub mod cities;
 pub mod config;
 pub mod grouping;
 pub mod layout;
+pub mod people_file;
 pub mod solar;
 pub mod theme;
 pub mod timecalc;

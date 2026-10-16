@@ -1,6 +1,7 @@
 //! `team.toml`: who is on the team and where they are.
 
 use crate::cities::CityDb;
+use crate::people_file::Entry;
 use chrono_tz::Tz;
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -115,7 +116,7 @@ pub fn parse(text: &str, db: &CityDb) -> TeamConfig {
         ..TeamConfig::default()
     };
     for (i, p) in raw.people.iter().enumerate() {
-        match resolve(p, db) {
+        match resolve_entry(&Entry::from(p), db) {
             Ok(person) => cfg.people.push(person),
             Err(msg) => cfg
                 .errors
@@ -125,7 +126,27 @@ pub fn parse(text: &str, db: &CityDb) -> TeamConfig {
     cfg
 }
 
-fn resolve(p: &RawPerson, db: &CityDb) -> Result<Person, String> {
+impl From<&RawPerson> for Entry {
+    fn from(p: &RawPerson) -> Entry {
+        Entry {
+            name: p.name.clone(),
+            city: p.city.clone(),
+            lat: p.lat.map(Num::get),
+            lon: p.lon.map(Num::get),
+            tz: p.tz.clone(),
+        }
+    }
+}
+
+/// Where a new team.toml is created when none exists yet: the platform config dir.
+pub fn default_path() -> PathBuf {
+    search_paths(None)
+        .pop()
+        .unwrap_or_else(|| PathBuf::from("team.toml"))
+}
+
+/// Validates one entry and places it, using the city database unless lat, lon and tz are all given.
+pub fn resolve_entry(p: &Entry, db: &CityDb) -> Result<Person, String> {
     let name = p.name.trim();
     if name.is_empty() {
         return Err("name is empty".to_string());
@@ -138,8 +159,7 @@ fn resolve(p: &RawPerson, db: &CityDb) -> Result<Person, String> {
         ),
         None => None,
     };
-    let lat = p.lat.map(Num::get);
-    let lon = p.lon.map(Num::get);
+    let (lat, lon) = (p.lat, p.lon);
     let (lat, lon, tz) = match (lat, lon, tz) {
         (Some(lat), Some(lon), Some(tz)) => (lat, lon, tz),
         _ => {
@@ -192,6 +212,30 @@ mod tests {
 
     fn p(text: &str) -> TeamConfig {
         parse(text, CityDb::embedded())
+    }
+
+    #[test]
+    fn resolve_entry_shares_rules() {
+        use crate::people_file::Entry;
+        let ok = Entry {
+            name: "Ana".into(),
+            city: "Lisbon".into(),
+            ..Entry::default()
+        };
+        assert_eq!(
+            resolve_entry(&ok, CityDb::embedded()).unwrap().tz,
+            chrono_tz::Europe::Lisbon
+        );
+        let bad = Entry {
+            name: "X".into(),
+            city: "Nowhereville".into(),
+            ..Entry::default()
+        };
+        assert!(
+            resolve_entry(&bad, CityDb::embedded())
+                .unwrap_err()
+                .contains("unknown city")
+        );
     }
 
     #[test]
